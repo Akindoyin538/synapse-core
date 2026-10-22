@@ -19,6 +19,7 @@
 
 pub mod execution;
 pub mod quoting;
+pub mod settlement;
 pub mod sources;
 
 use async_trait::async_trait;

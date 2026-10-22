@@ -168,6 +168,25 @@ pub struct Settlement {
     pub destination_account: Option<String>,
 }
 
+/// Settlement state for one executed swap hand-off (`swap_settlements` row).
+/// `status` is one of `pending`, `settlement_pending`, `settled`, `failed`.
+#[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
+pub struct SwapSettlement {
+    pub id: Uuid,
+    pub idempotency_key: String,
+    pub transaction_id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub stellar_account: String,
+    pub asset_code: String,
+    pub amount: BigDecimal,
+    pub status: String,
+    pub settlement_ref: Option<String>,
+    pub last_error: Option<String>,
+
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// A Phase 2 swap order. `status` is one of `quoted`, `executing`, `settled`,
 /// `failed` (see `swap_orders` in migrations).
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -179,6 +198,29 @@ pub struct SwapOrder {
     pub amount: BigDecimal,
     pub minimum_output: BigDecimal,
     pub status: String,
+
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[async_graphql::Object]
+impl Settlement {
+    async fn id(&self) -> String {
+        self.id.to_string()
+    }
+    async fn asset_code(&self) -> &str {
+        &self.asset_code
+    }
+    async fn total_amount(&self) -> String {
+        self.total_amount.to_string()
+    }
+    async fn tx_count(&self) -> i32 {
+        self.tx_count
+    }
+    async fn period_start(&self) -> DateTime<Utc> {
+        self.period_start
+    }
+   
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
