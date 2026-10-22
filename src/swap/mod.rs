@@ -16,15 +16,122 @@
 //! the `swap_engine` feature flag - so transactions for tenants and assets not
 //! opted into swap are completely unaffected.
 
+pub mod handoff;
+
+pub use handoff::{
+    BridgeHandoff, BridgeHandoffPayload, BridgeHandoffStatus, BridgeHandoffError,
+    NoopBridgeHandoff,
+};
+
 use async_trait::async_trait;
 use sqlx::types::BigDecimal;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 use crate::db::models::Transaction;
 use crate::services::feature_flags::FeatureFlagService;
 
 /// Feature flag that opts a tenant into Phase 2 swap hand-off.
 pub const SWAP_ENGINE_FLAG: &str = "swap_engine";
+
+/// Error returned when the swap subsystem is draining (or has stopped) and
+/// therefore refuses to accept new quotes/orders.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrainingError;
+
+impl fmt::Display for DrainingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "swap subsystem is draining; not accepting new orders")
+    }
+}
+
+impl std::error::Error for DrainingError {}
+
+/// Shared shutdown coordination for the swap subsystem.
+///
+/// Cloned cheaply (it is `Arc`-backed) and shared by every swap worker,
+/// executor and handler. Shutdown is sequenced as:
+///
+/// 1. [`begin_drain`](Self::begin_drain) - flips the draining flag so new
+///    order acceptance is rejected with [`DrainingError`] and readiness
+///    reports not-ready.
+/// 2. In-flight work observes [`is_draining`](Self::is_draining) /
+///    [`cancelled`](Self::cancelled) and finishes or parks within the
+///    configured grace period.
+/// 3. [`cancel`](Self::cancel) fires the cancellation token to abort work that
+///    outlived the grace period.
+#[derive(Debug, Clone)]
+pub struct ShutdownCoordinator {
+    inner: Arc<ShutdownInner>,
+}
+
+#[derive(Debug)]
+struct ShutdownInner {
+    draining: AtomicBool,
+    token: CancellationToken,
+}
+
+impl Default for ShutdownCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShutdownCoordinator {
+    /// Create a coordinator in the running (accepting) state.
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(ShutdownInner {
+                draining: AtomicBool::new(false),
+                token: CancellationToken::new(),
+            }),
+        }
+    }
+
+    /// Enter draining mode. Idempotent; safe to call from multiple signals.
+    pub fn begin_drain(&self) {
+        self.inner.draining.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether the subsystem is draining (no new orders accepted).
+    pub fn is_draining(&self) -> bool {
+        self.inner.draining.load(Ordering::SeqCst)
+    }
+
+    /// Whether the subsystem is accepting new work.
+    pub fn is_accepting(&self) -> bool {
+        !self.is_draining()
+    }
+
+    /// The cancellation token workers should select on. Fires once the grace
+    /// period has elapsed (or shutdown is forced).
+    pub fn cancelled(&self) -> CancellationToken {
+        self.inner.token.clone()
+    }
+
+    /// Fire the cancellation token, aborting work that outlived the grace
+    /// period. Idempotent.
+    pub fn cancel(&self) {
+        self.inner.token.cancel();
+    }
+
+    /// Whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.token.is_cancelled()
+    }
+
+    /// Guard used by order-acceptance entry points: returns
+    /// [`DrainingError`] when the subsystem is no longer accepting work.
+    pub fn ensure_accepting(&self) -> Result<(), DrainingError> {
+        if self.is_draining() {
+            Err(DrainingError)
+        } else {
+            Ok(())
+        }
+    }
+}
 
 /// The exact data a completed Phase 1 transaction hands to Phase 2 at the
 /// `swap_ready` state. This is the stable contract a swap-engine implementation

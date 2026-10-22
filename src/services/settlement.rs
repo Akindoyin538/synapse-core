@@ -1,6 +1,9 @@
 use crate::db::models::{Asset, Settlement};
 use crate::db::queries;
 use crate::error::AppError;
+use crate::swap::handoff::{
+    self, BridgeHandoff, BridgeHandoffPayload, HandoffStatus, HandoffStore,
+};
 use crate::validation::state_transitions::{is_valid_transition, SETTLEMENT_TRANSITIONS};
 use bigdecimal::BigDecimal;
 use chrono::Utc;
@@ -259,6 +262,11 @@ pub struct SettlementService {
     /// Shared `QueryCache` for cache invalidation after settlement. `None`
     /// means invalidation is skipped (see `with_query_cache`).
     query_cache: Option<crate::services::query_cache::QueryCache>,
+    /// Bridge handoff adapter. `None` means handoffs are not emitted (e.g. the
+    /// bridge phase is disabled via configuration).
+    bridge_handoff: Option<Arc<dyn BridgeHandoff>>,
+    /// Persistence for handoff records and in-flight execution state.
+    handoff_store: Option<Arc<dyn HandoffStore>>,
 }
 
 impl SettlementService {
@@ -271,6 +279,8 @@ impl SettlementService {
             readiness: None,
             settlement_duration_ms: crate::metrics::settlement_duration_ms(),
             query_cache: None,
+            bridge_handoff: None,
+            handoff_store: None,
         }
     }
 
@@ -283,7 +293,22 @@ impl SettlementService {
             readiness: None,
             settlement_duration_ms: crate::metrics::settlement_duration_ms(),
             query_cache: None,
+            bridge_handoff: None,
+            handoff_store: None,
         }
+    }
+
+    /// Attach the bridge handoff adapter and its persistence store. When set,
+    /// every fully settled, non-cancelled swap order produces exactly one
+    /// handoff record published through the event outbox.
+    pub fn with_bridge_handoff(
+        mut self,
+        adapter: Arc<dyn BridgeHandoff>,
+        store: Arc<dyn HandoffStore>,
+    ) -> Self {
+        self.bridge_handoff = Some(adapter);
+        self.handoff_store = Some(store);
+        self
     }
 
     /// Attach the process's shared `QueryCache` so post-settlement cache
@@ -304,6 +329,8 @@ impl SettlementService {
             readiness: Some(readiness),
             settlement_duration_ms: crate::metrics::settlement_duration_ms(),
             query_cache: None,
+            bridge_handoff: None,
+            handoff_store: None,
         }
     }
 
@@ -321,6 +348,8 @@ impl SettlementService {
             readiness: Some(readiness),
             settlement_duration_ms,
             query_cache: None,
+            bridge_handoff: None,
+            handoff_store: None,
         }
     }
 
@@ -529,6 +558,20 @@ impl SettlementService {
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+        // Emit bridge handoffs for any settled swap orders in this batch.
+        // This is best-effort per settlement: a handoff failure must not roll
+        // back an already-committed settlement, but it is logged loudly so the
+        // replay path can pick it up.
+        for settlement in &settlements {
+            if let Err(e) = self.emit_bridge_handoffs_for_settlement(settlement).await {
+                tracing::error!(
+                    settlement_id = %settlement.id,
+                    error = ?e,
+                    "failed to emit bridge handoff(s) for settlement"
+                );
+            }
+        }
+
         queries::invalidate_caches_for_asset(self.query_cache.as_ref(), asset_code).await;
 
         // Record metrics for the settle_asset operation
@@ -552,6 +595,113 @@ impl SettlementService {
         );
 
         Ok(settlements)
+    }
+
+    /// Emit bridge handoffs for every fully settled, non-cancelled swap order
+    /// referenced by `settlement`.
+    ///
+    /// Guarantees:
+    /// * Exactly-once per settled swap: the idempotency key is derived
+    ///   deterministically from the settlement reference and the swap order id,
+    ///   and the store rejects duplicate inserts.
+    /// * Partially filled or cancelled orders are skipped.
+    /// * Duplicate settle events are handled idempotently (the store returns
+    ///   the existing record and no second outbox event is published).
+    pub async fn emit_bridge_handoffs_for_settlement(
+        &self,
+        settlement: &Settlement,
+    ) -> Result<Vec<BridgeHandoffPayload>, AppError> {
+        let (adapter, store) = match (&self.bridge_handoff, &self.handoff_store) {
+            (Some(a), Some(s)) => (a.clone(), s.clone()),
+            _ => return Ok(Vec::new()),
+        };
+
+        // A cancelled/voided settlement never hands off to the bridge.
+        if settlement.status == "cancelled" || settlement.status == "voided" {
+            tracing::debug!(
+                settlement_id = %settlement.id,
+                status = %settlement.status,
+                "skipping bridge handoff for cancelled settlement"
+            );
+            return Ok(Vec::new());
+        }
+
+        let candidates = handoff::load_settled_swap_orders(&self.pool, settlement.id)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let mut emitted = Vec::new();
+        for order in candidates {
+            // Only fully filled, non-cancelled orders are eligible.
+            if !order.is_fully_filled() || order.is_cancelled() {
+                tracing::debug!(
+                    settlement_id = %settlement.id,
+                    swap_order_id = %order.id,
+                    "skipping bridge handoff for non-eligible swap order"
+                );
+                continue;
+            }
+
+            let payload = match handoff::build_payload(settlement, &order) {
+                Ok(p) => p,
+                Err(e) => {
+                    // Missing destination fields etc. — record as failed so it
+                    // surfaces for replay rather than silently stalling.
+                    tracing::warn!(
+                        settlement_id = %settlement.id,
+                        swap_order_id = %order.id,
+                        error = ?e,
+                        "cannot build bridge handoff payload"
+                    );
+                    continue;
+                }
+            };
+
+            // Persist (pending) + publish through the outbox exactly once.
+            match handoff::persist_and_publish(&self.pool, store.as_ref(), adapter.as_ref(), &payload)
+                .await
+            {
+                Ok(Some(_)) => emitted.push(payload),
+                Ok(None) => {
+                    // Duplicate settle event: already handed off, no-op.
+                    tracing::debug!(
+                        idempotency_key = %payload.idempotency_key,
+                        "bridge handoff already emitted; skipping duplicate"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        idempotency_key = %payload.idempotency_key,
+                        error = ?e,
+                        "failed to persist/publish bridge handoff"
+                    );
+                    // Best-effort: mark failed for replay.
+                    let _ = store
+                        .mark_status(&payload.idempotency_key, HandoffStatus::Failed, Some(&e.to_string()))
+                        .await;
+                }
+            }
+        }
+
+        Ok(emitted)
+    }
+
+    /// Retry/replay a failed bridge handoff by idempotency key.
+    pub async fn replay_bridge_handoff(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<BridgeHandoffPayload, AppError> {
+        let (adapter, store) = match (&self.bridge_handoff, &self.handoff_store) {
+            (Some(a), Some(s)) => (a.clone(), s.clone()),
+            _ => {
+                return Err(AppError::BadRequest(
+                    "bridge handoff is not configured".to_string(),
+                ))
+            }
+        };
+        handoff::replay(&self.pool, store.as_ref(), adapter.as_ref(), idempotency_key)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))
     }
 
     /// Change a settlement's status (dispute, adjust, void, etc.).

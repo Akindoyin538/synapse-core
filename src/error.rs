@@ -132,6 +132,30 @@ pub mod codes {
         400,
         "Query exceeds depth, complexity, or alias limits",
     );
+
+    // Cross-chain bridge handoff errors
+    pub const BRIDGE_001: (&str, u16, &str) = (
+        "ERR_BRIDGE_001",
+        400,
+        "Bridge handoff is missing required destination fields",
+    );
+    pub const BRIDGE_002: (&str, u16, &str) = (
+        "ERR_BRIDGE_002",
+        409,
+        "Bridge handoff already exists for this settlement (idempotency)",
+    );
+    pub const BRIDGE_003: (&str, u16, &str) = (
+        "ERR_BRIDGE_003",
+        504,
+        "Timed out awaiting bridge handoff acknowledgement",
+    );
+
+    // Shutdown / draining errors
+    pub const SHUTDOWN_001: (&str, u16, &str) = (
+        "ERR_SHUTDOWN_001",
+        503,
+        "Service is shutting down and not accepting new swap orders",
+    );
 }
 
 /// Get all error codes as a vector for catalog generation
@@ -252,6 +276,26 @@ pub fn get_all_error_codes() -> Vec<ErrorCode> {
             http_status: codes::QUERY_COMPLEXITY_001.1,
             description: codes::QUERY_COMPLEXITY_001.2,
         },
+        ErrorCode {
+            code: codes::BRIDGE_001.0,
+            http_status: codes::BRIDGE_001.1,
+            description: codes::BRIDGE_001.2,
+        },
+        ErrorCode {
+            code: codes::BRIDGE_002.0,
+            http_status: codes::BRIDGE_002.1,
+            description: codes::BRIDGE_002.2,
+        },
+        ErrorCode {
+            code: codes::BRIDGE_003.0,
+            http_status: codes::BRIDGE_003.1,
+            description: codes::BRIDGE_003.2,
+        },
+        ErrorCode {
+            code: codes::SHUTDOWN_001.0,
+            http_status: codes::SHUTDOWN_001.1,
+            description: codes::SHUTDOWN_001.2,
+        },
     ]
 }
 
@@ -332,6 +376,18 @@ pub enum AppError {
 
     #[error("Internal error: {0}")]
     Anyhow(#[from] anyhow::Error),
+
+    #[error("Bridge handoff missing destination fields: {0}")]
+    BridgeHandoffMissingDestination(String),
+
+    #[error("Bridge handoff already exists: {0}")]
+    BridgeHandoffAlreadyExists(String),
+
+    #[error("Bridge handoff acknowledgement timed out: {0}")]
+    BridgeHandoffAckTimeout(String),
+
+    #[error("Service is shutting down: {0}")]
+    ShuttingDown(String),
 }
 
 impl AppError {
@@ -362,6 +418,10 @@ impl AppError {
             AppError::InsufficientPermissions(_) => StatusCode::FORBIDDEN,
             AppError::Redis(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Anyhow(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::BridgeHandoffMissingDestination(_) => StatusCode::BAD_REQUEST,
+            AppError::BridgeHandoffAlreadyExists(_) => StatusCode::CONFLICT,
+            AppError::BridgeHandoffAckTimeout(_) => StatusCode::GATEWAY_TIMEOUT,
+            AppError::ShuttingDown(_) => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -394,6 +454,10 @@ impl AppError {
             AppError::InsufficientPermissions(_) => codes::AUTH_002.0,
             AppError::Redis(_) => codes::REDIS_001.0,
             AppError::Anyhow(_) => codes::INTERNAL_001.0,
+            AppError::BridgeHandoffMissingDestination(_) => codes::BRIDGE_001.0,
+            AppError::BridgeHandoffAlreadyExists(_) => codes::BRIDGE_002.0,
+            AppError::BridgeHandoffAckTimeout(_) => codes::BRIDGE_003.0,
+            AppError::ShuttingDown(_) => codes::SHUTDOWN_001.0,
         }
     }
 
@@ -499,6 +563,12 @@ impl IntoResponse for AppError {
             }
             AppError::Validation(msg) => {
                 format!("Validation failed. {msg}")
+            }
+            AppError::BridgeHandoffMissingDestination(msg) => {
+                format!("Handoff requires destination chain and address. {msg}")
+            }
+            AppError::ShuttingDown(msg) => {
+                format!("Retry after shutdown completes. {msg}")
             }
             _ => error_message.clone(),
         };
@@ -782,6 +852,28 @@ mod tests {
                 "docs/error-catalog.md documents {token}, which is not in get_all_error_codes()"
             );
         }
+    }
+
+    #[test]
+    fn test_bridge_handoff_error_mappings() {
+        let missing = AppError::BridgeHandoffMissingDestination("destination_chain".to_string());
+        assert_eq!(missing.status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(missing.code(), codes::BRIDGE_001.0);
+
+        let duplicate = AppError::BridgeHandoffAlreadyExists("handoff-1".to_string());
+        assert_eq!(duplicate.status_code(), StatusCode::CONFLICT);
+        assert_eq!(duplicate.code(), codes::BRIDGE_002.0);
+
+        let timeout = AppError::BridgeHandoffAckTimeout("handoff-1".to_string());
+        assert_eq!(timeout.status_code(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(timeout.code(), codes::BRIDGE_003.0);
+    }
+
+    #[test]
+    fn test_shutting_down_error_maps_to_503() {
+        let error = AppError::ShuttingDown("draining in-flight orders".to_string());
+        assert_eq!(error.status_code(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(error.code(), codes::SHUTDOWN_001.0);
     }
 
     #[tokio::test]

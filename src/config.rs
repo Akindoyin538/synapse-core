@@ -228,6 +228,23 @@ pub struct Config {
     pub partition_lookahead_max: u32,
     // Per-class query timeout configuration
     pub per_class_timeout_config: PerClassTimeoutConfig,
+    // Cross-chain bridge handoff configuration
+    /// Whether settled swaps are handed off to the cross-chain bridge phase.
+    /// When disabled, no handoff records are produced (local/no-op mode).
+    pub bridge_enabled: bool,
+    /// Base URL of the bridge adapter endpoint. Optional: when unset the
+    /// no-op/local bridge implementation is used.
+    pub bridge_endpoint_url: Option<String>,
+    /// How long to wait for a bridge acknowledgement before marking a
+    /// handoff as failed (and eligible for retry/replay), in seconds.
+    pub bridge_ack_timeout_secs: u64,
+    // Graceful shutdown configuration
+    /// Total grace period allowed for in-flight swap work to drain before
+    /// the process proceeds to flush the outbox and close the DB pool.
+    pub shutdown_grace_period_secs: u64,
+    /// Maximum time to wait for in-flight swap executions to finish during
+    /// draining, in seconds. Must not exceed `shutdown_grace_period_secs`.
+    pub shutdown_drain_timeout_secs: u64,
 }
 
 pub mod assets;
@@ -406,6 +423,37 @@ impl Config {
                 background_job_timeout_ms: env::var("DB_TIMEOUT_BACKGROUND_JOB_MS")
                     .unwrap_or_else(|_| "60000".to_string())
                     .parse()?,
+            },
+            bridge_enabled: env::var("BRIDGE_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            bridge_endpoint_url: env::var("BRIDGE_ENDPOINT_URL")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
+            bridge_ack_timeout_secs: env::var("BRIDGE_ACK_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()?,
+            shutdown_grace_period_secs: env::var("SHUTDOWN_GRACE_PERIOD_SECS")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()?,
+            shutdown_drain_timeout_secs: {
+                let grace: u64 = env::var("SHUTDOWN_GRACE_PERIOD_SECS")
+                    .unwrap_or_else(|_| "30".to_string())
+                    .parse()
+                    .unwrap_or(30);
+                let drain: u64 = env::var("SHUTDOWN_DRAIN_TIMEOUT_SECS")
+                    .unwrap_or_else(|_| "20".to_string())
+                    .parse()?;
+                if drain > grace {
+                    anyhow::bail!(
+                        "SHUTDOWN_DRAIN_TIMEOUT_SECS ({}) cannot be greater than SHUTDOWN_GRACE_PERIOD_SECS ({})",
+                        drain,
+                        grace
+                    );
+                }
+                drain
             },
         })
     }

@@ -18,6 +18,8 @@ enum Command {
 	Scorecard(commands::scorecard::ScorecardArgs),
 	/// Generate a postmortem draft from alert, metric, and deployment history.
 	Postmortem(commands::postmortem::PostmortemArgs),
+	/// Rebuild or backfill the swap read-model projection from event history.
+	ReadModelRebuild(commands::read_model_rebuild::ReadModelRebuildArgs),
 }
 
 fn main() -> Result<()> {
@@ -26,5 +28,6 @@ fn main() -> Result<()> {
 		Command::CapacityForecast(args) => commands::capacity_forecast::run(args),
 		Command::Scorecard(args) => commands::scorecard::run(args),
 		Command::Postmortem(args) => commands::postmortem::run(args),
+		Command::ReadModelRebuild(args) => commands::read_model_rebuild::run(args),
 	}
 }

@@ -3,6 +3,27 @@ use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::time::Duration;
 
+/// Outcome of the startup recovery pass over interrupted in-flight swap work.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct SwapRecoveryReport {
+    /// Orders that were resumed (re-queued for execution).
+    pub resumed: u64,
+    /// Orders that were safely failed via the compensation path.
+    pub failed: u64,
+    /// Inventory reservations released for abandoned in-flight work.
+    pub reservations_released: u64,
+}
+
+impl SwapRecoveryReport {
+    pub fn print(&self) {
+        println!("\n=== Swap Startup Recovery Report ===");
+        println!("Resumed orders:          {}", self.resumed);
+        println!("Safely failed orders:    {}", self.failed);
+        println!("Reservations released:   {}", self.reservations_released);
+        println!("====================================\n");
+    }
+}
+
 pub struct ValidationReport {
     pub environment: bool,
     pub database: bool,
@@ -175,6 +196,62 @@ pub async fn assert_no_bypassrls(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
+/// Recovers interrupted in-flight swap work left behind by a previous
+/// (possibly hard-killed) process. Must run *after* migrations have been
+/// applied and before the swap workers start accepting new work, so that
+/// orders are never observed in an indeterminate state.
+///
+/// The pass is idempotent: each interrupted order is either resumed
+/// (re-queued for execution) or safely failed through the existing
+/// compensation path, and any inventory reservations held by abandoned
+/// work are released. Running it twice is a no-op.
+pub async fn recover_interrupted_swaps(pool: &PgPool) -> Result<SwapRecoveryReport> {
+    let mut report = SwapRecoveryReport::default();
+
+    // Resume orders that were mid-execution but had not yet reached a
+    // terminal state. These are re-queued so the normal worker path picks
+    // them up; the executor is idempotent per order id.
+    let resumed = sqlx::query(
+        "UPDATE swap_orders \
+         SET status = 'pending', updated_at = NOW() \
+         WHERE status IN ('executing', 'submitted')",
+    )
+    .execute(pool)
+    .await
+    .context("failed to resume interrupted swap orders")?
+    .rows_affected();
+    report.resumed = resumed;
+
+    // Safely fail orders that cannot be resumed (e.g. stuck in settlement
+    // with no matching settlement record) via the compensation path.
+    let failed = sqlx::query(
+        "UPDATE swap_orders \
+         SET status = 'failed', failure_reason = 'interrupted_by_shutdown', updated_at = NOW() \
+         WHERE status = 'settling' \
+           AND id NOT IN (SELECT swap_order_id FROM settlements WHERE status = 'completed')",
+    )
+    .execute(pool)
+    .await
+    .context("failed to safely fail interrupted swap orders")?
+    .rows_affected();
+    report.failed = failed;
+
+    // Release inventory reservations held by abandoned in-flight work.
+    let released = sqlx::query(
+        "UPDATE inventory_reservations \
+         SET status = 'released', released_at = NOW() \
+         WHERE status = 'held' \
+           AND swap_order_id IN (SELECT id FROM swap_orders WHERE status = 'failed')",
+    )
+    .execute(pool)
+    .await
+    .context("failed to release inventory reservations for abandoned work")?
+    .rows_affected();
+    report.reservations_released = released;
+
+    Ok(report)
+}
+
 async fn validate_horizon(horizon_url: &str) -> Result<()> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -233,7 +310,16 @@ mod tests {
             slow_query_threshold_ms: 500,
             settlement_max_batch_size: 10_000,
             settlement_min_tx_count: 1,
+            shutdown_grace_period_secs: 30,
         }
+    }
+
+    #[test]
+    fn test_swap_recovery_report_default_is_empty() {
+        let report = SwapRecoveryReport::default();
+        assert_eq!(report.resumed, 0);
+        assert_eq!(report.failed, 0);
+        assert_eq!(report.reservations_released, 0);
     }
 
     #[test]

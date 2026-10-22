@@ -350,6 +350,144 @@ pub fn account_monitor_concurrent_write_prevented_total() -> Counter<u64> {
         .init()
 }
 
+// ---------------------------------------------------------------------------
+// Cross-chain bridge handoff (issue #1464)
+// ---------------------------------------------------------------------------
+
+/// Handoff records emitted to the bridge boundary, labeled by `outcome`
+/// (`"emitted"` | `"duplicate_suppressed"` | `"skipped"`). A `skipped`
+/// outcome covers settled swaps that legitimately must not produce a
+/// handoff (partially filled / cancelled orders, missing destination fields).
+pub fn bridge_handoff_emitted_total() -> Counter<u64> {
+    meter()
+        .u64_counter("bridge_handoff_emitted_total")
+        .with_description(
+            "Bridge handoff records produced for settled swaps, labeled by outcome \
+             (emitted = newly published, duplicate_suppressed = already emitted, \
+             skipped = not eligible)",
+        )
+        .init()
+}
+
+/// Handoff acknowledgements received from the bridge adapter, labeled by
+/// `status` (`"acknowledged"` | `"failed"`).
+pub fn bridge_handoff_ack_total() -> Counter<u64> {
+    meter()
+        .u64_counter("bridge_handoff_ack_total")
+        .with_description(
+            "Bridge handoff acknowledgements recorded, labeled by status \
+             (acknowledged | failed)",
+        )
+        .init()
+}
+
+/// Failed handoffs replayed via the retry/replay path, labeled by `outcome`
+/// (`"replayed"` | `"still_failed"` | `"not_found"`).
+pub fn bridge_handoff_replay_total() -> Counter<u64> {
+    meter()
+        .u64_counter("bridge_handoff_replay_total")
+        .with_description(
+            "Bridge handoff replay attempts for failed handoffs, labeled by outcome \
+             (replayed | still_failed | not_found)",
+        )
+        .init()
+}
+
+/// Time a handoff spent awaiting acknowledgement, in milliseconds, labeled
+/// by `status` (`"acknowledged"` | `"failed"` | `"timed_out"`).
+pub fn bridge_handoff_ack_wait_ms() -> Histogram<f64> {
+    meter()
+        .f64_histogram("bridge_handoff_ack_wait_ms")
+        .with_description(
+            "Time a bridge handoff spent awaiting acknowledgement, labeled by status",
+        )
+        .with_unit(Unit::new("ms"))
+        .init()
+}
+
+// ---------------------------------------------------------------------------
+// Graceful shutdown / swap draining (issue #1465)
+// ---------------------------------------------------------------------------
+
+/// Wall-clock duration of the swap subsystem drain, from the moment draining
+/// mode was entered until in-flight work finished (or the grace period
+/// elapsed), in milliseconds.
+pub fn swap_drain_duration_ms() -> Histogram<f64> {
+    meter()
+        .f64_histogram("swap_drain_duration_ms")
+        .with_description(
+            "Time from entering swap draining mode until in-flight work finished \
+             or the grace period elapsed",
+        )
+        .with_unit(Unit::new("ms"))
+        .init()
+}
+
+/// In-flight swap orders observed at drain start, labeled by `outcome`
+/// (`"completed"` | `"parked"` | `"abandoned"`). `parked` orders are
+/// recovered on the next startup via the existing recovery paths.
+pub fn swap_orders_drained_total() -> Counter<u64> {
+    meter()
+        .u64_counter("swap_orders_drained_total")
+        .with_description(
+            "In-flight swap orders handled during drain, labeled by outcome \
+             (completed = finished within grace, parked = left for restart \
+             recovery, abandoned = grace elapsed and reservation released)",
+        )
+        .init()
+}
+
+/// New swap order/quote acceptance attempts rejected because the subsystem
+/// was draining.
+pub fn swap_orders_rejected_draining_total() -> Counter<u64> {
+    meter()
+        .u64_counter("swap_orders_rejected_draining_total")
+        .with_description(
+            "Swap quote/order acceptance attempts rejected because the subsystem \
+             was draining",
+        )
+        .init()
+}
+
+// ---------------------------------------------------------------------------
+// Batch swap operations (issue #1470)
+// ---------------------------------------------------------------------------
+
+/// Per-item outcomes of batch swap requests, labeled by `operation`
+/// (`"quote"` | `"submit"` | `"cancel"` | `"status"`) and `outcome`
+/// (`"success"` | `"failure"`).
+pub fn swap_batch_item_outcomes_total() -> Counter<u64> {
+    meter()
+        .u64_counter("swap_batch_item_outcomes_total")
+        .with_description(
+            "Per-item outcomes of batch swap requests, labeled by operation and \
+             outcome (success | failure)",
+        )
+        .init()
+}
+
+/// Batch swap requests rejected wholesale (e.g. exceeding the per-batch size
+/// cap), labeled by `operation` and `reason` (`"cap_exceeded"` |
+/// `"quota_exceeded"` | `"invalid_request"`).
+pub fn swap_batch_rejected_total() -> Counter<u64> {
+    meter()
+        .u64_counter("swap_batch_rejected_total")
+        .with_description(
+            "Batch swap requests rejected wholesale, labeled by operation and reason",
+        )
+        .init()
+}
+
+/// End-to-end duration of a batch swap request, in milliseconds, labeled by
+/// `operation`.
+pub fn swap_batch_duration_ms() -> Histogram<f64> {
+    meter()
+        .f64_histogram("swap_batch_duration_ms")
+        .with_description("End-to-end duration of a batch swap request, labeled by operation")
+        .with_unit(Unit::new("ms"))
+        .init()
+}
+
 fn task_state() -> &'static [std::sync::Mutex<TaskCategoryState>; 3] {
     TASK_STATE.get_or_init(|| {
         [
