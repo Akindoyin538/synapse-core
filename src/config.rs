@@ -165,6 +165,58 @@ impl PerClassTimeoutConfig {
     }
 }
 
+/// Phase 2 swap engine settings. All variables are optional; the engine is
+/// disabled by default and nothing in `src/swap` is wired while it is off.
+#[derive(Debug, Clone)]
+pub struct SwapConfig {
+    /// Master switch for the swap engine (`SWAP_ENGINE_ENABLED`). Default: false
+    pub engine_enabled: bool,
+    /// Largest order accepted, in source-asset units (`SWAP_MAX_ORDER_AMOUNT`). Default: 10000
+    pub max_order_amount: BigDecimal,
+    /// Engine fee in basis points, 1 bp = 0.01% (`SWAP_FEE_BPS`). Default: 0
+    pub fee_bps: u32,
+    /// Lifetime of an issued quote in seconds (`SWAP_QUOTE_TTL_SECONDS`). Default: 30
+    pub quote_ttl_seconds: u64,
+}
+
+impl Default for SwapConfig {
+    fn default() -> Self {
+        Self {
+            engine_enabled: false,
+            max_order_amount: BigDecimal::from(10_000),
+            fee_bps: 0,
+            quote_ttl_seconds: 30,
+        }
+    }
+}
+
+impl SwapConfig {
+    /// Load swap settings from the environment, falling back to
+    /// [`SwapConfig::default`] for any variable that is unset. Invalid values
+    /// fail startup and name the offending variable.
+    pub fn from_env() -> anyhow::Result<Self> {
+        let defaults = Self::default();
+        let config = Self {
+            engine_enabled: parse_bool_env("SWAP_ENGINE_ENABLED", defaults.engine_enabled)?,
+            max_order_amount: parse_env_or("SWAP_MAX_ORDER_AMOUNT", defaults.max_order_amount)?,
+            fee_bps: parse_env_or("SWAP_FEE_BPS", defaults.fee_bps)?,
+            quote_ttl_seconds: parse_env_or("SWAP_QUOTE_TTL_SECONDS", defaults.quote_ttl_seconds)?,
+        };
+
+        if config.max_order_amount <= BigDecimal::from(0) {
+            anyhow::bail!("SWAP_MAX_ORDER_AMOUNT must be greater than 0");
+        }
+        if config.fee_bps > 10_000 {
+            anyhow::bail!("SWAP_FEE_BPS must be between 0 and 10000 (100%)");
+        }
+        if config.quote_ttl_seconds == 0 {
+            anyhow::bail!("SWAP_QUOTE_TTL_SECONDS must be greater than 0");
+        }
+
+        Ok(config)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub app_env: AppEnv,
@@ -258,6 +310,8 @@ pub struct Config {
     pub quote_cache_ttl_secs: u64,
     /// Max age of the price snapshot a cached quote was derived from, in seconds. Default: 5
     pub quote_cache_max_staleness_secs: u64,
+    // Phase 2 swap engine (disabled by default)
+    pub swap: SwapConfig,
 }
 
 pub mod assets;
@@ -452,66 +506,7 @@ impl Config {
                     .unwrap_or_else(|_| "60000".to_string())
                     .parse()?,
             },
-            quote_cache_ttl_secs: env::var("QUOTE_CACHE_TTL_SECS")
-                .unwrap_or_else(|_| "10".to_string())
-                .parse()?,
-            quote_cache_max_staleness_secs: env::var("QUOTE_CACHE_MAX_STALENESS_SECS")
-                .unwrap_or_else(|_| "5".to_string())
-                .parse()?,
-            swap_engine_enabled: parse_bool(
-                &env::var("SWAP_ENGINE_ENABLED").unwrap_or_else(|_| "false".to_string()),
-                "SWAP_ENGINE_ENABLED",
-            )?,
-            swap_engine_tenant_allowlist: env::var("SWAP_ENGINE_TENANT_ALLOWLIST")
-                .unwrap_or_default()
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(String::from)
-                .collect(),
-            asset_registry_refresh_secs: env::var("ASSET_REGISTRY_REFRESH_SECS")
-                .unwrap_or_else(|_| "300".to_string())
-                .parse()?,
-            swap_accepting_orders: env::var("SWAP_ACCEPTING_ORDERS")
-                .unwrap_or_else(|_| "true".to_string())
-                .parse()?,
-            swap_breaker: BreakerConfig {
-                window: Duration::from_secs(
-                    env::var("SWAP_BREAKER_WINDOW_SECS")
-                        .unwrap_or_else(|_| "60".to_string())
-                        .parse()?,
-                ),
-                min_calls: env::var("SWAP_BREAKER_MIN_CALLS")
-                    .unwrap_or_else(|_| "20".to_string())
-                    .parse()?,
-                failure_rate_threshold: env::var("SWAP_BREAKER_FAILURE_RATE")
-                    .unwrap_or_else(|_| "0.5".to_string())
-                    .parse()?,
-                slow_call_threshold: Duration::from_millis(
-                    env::var("SWAP_BREAKER_SLOW_CALL_MS")
-                        .unwrap_or_else(|_| "2000".to_string())
-                        .parse()?,
-                ),
-                open_duration: Duration::from_secs(
-                    env::var("SWAP_BREAKER_OPEN_SECS")
-                        .unwrap_or_else(|_| "30".to_string())
-                        .parse()?,
-                ),
-            },
-            swap_fees: FeeConfig {
-                default: FeeRule {
-                    percentage_bps: env::var("SWAP_FEE_PERCENTAGE_BPS")
-                        .unwrap_or_else(|_| "0".to_string())
-                        .parse()?,
-                    flat: env::var("SWAP_FEE_FLAT")
-                        .unwrap_or_else(|_| "0".to_string())
-                        .parse()?,
-                    spread_bps: env::var("SWAP_SPREAD_BPS")
-                        .unwrap_or_else(|_| "0".to_string())
-                        .parse()?,
-                },
-                ..Default::default()
-            },
+            swap: SwapConfig::from_env()?,
         })
     }
 
@@ -555,6 +550,36 @@ fn parse_allowed_ips(raw: &str) -> anyhow::Result<AllowedIps> {
     }
 
     Ok(AllowedIps::Cidrs(cidrs))
+}
+
+/// Parse an optional env var, returning `default` when it is unset. A bad value
+/// is reported with the variable name so startup failures are easy to trace.
+fn parse_env_or<T>(key: &str, default: T) -> anyhow::Result<T>
+where
+    T: FromStr,
+    T::Err: std::fmt::Display,
+{
+    match env::var(key) {
+        Ok(raw) => raw
+            .trim()
+            .parse::<T>()
+            .map_err(|e| anyhow::anyhow!("{key} has invalid value '{raw}': {e}")),
+        Err(_) => Ok(default),
+    }
+}
+
+/// Parse an optional boolean env var. Only `true`/`false` and `1`/`0`
+/// (case-insensitive) are accepted; anything else is rejected at startup
+/// rather than guessed at.
+fn parse_bool_env(key: &str, default: bool) -> anyhow::Result<bool> {
+    match env::var(key) {
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" => Ok(true),
+            "false" | "0" => Ok(false),
+            _ => anyhow::bail!("{key} must be 'true', 'false', '1' or '0' (got '{raw}')"),
+        },
+        Err(_) => Ok(default),
+    }
 }
 
 fn parse_log_format(raw: &str) -> anyhow::Result<LogFormat> {

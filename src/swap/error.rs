@@ -1,11 +1,37 @@
-//! Typed pre-trade rejections for swap orders.
+//! Error types for the Phase 2 swap engine.
 //!
+//! Follows the conventions in [`crate::error`]: every variant maps to a stable
+//! `ERR_SWAP_*` code and HTTP status in `AppError`, and `SwapError` reaches the
+//! crate-level error type through `AppError::Swap`. Because `Internal` carries
+//! free-form engine text, it is redacted from client responses like the other
+//! wrapping variants.
+//!
+//! This module also defines typed pre-trade rejections for swap orders.
 //! Codes are stable and machine-readable (`ERR_SWAP_RISK_*`); never rename or
 //! reuse one. Messages are fixed strings that contain no limit values,
 //! account identifiers, or internal detail, so they are safe to return to
 //! clients. The precise reason is kept in the audit record, not the response.
 
 use std::fmt;
+
+use thiserror::Error;
+
+/// Error returned by a [`SwapEngine`](super::SwapEngine) or by any swap
+/// submodule boundary trait ([`QuoteSource`](super::quote::QuoteSource),
+/// [`ExecutionVenue`](super::execution::ExecutionVenue),
+/// [`SettlementAdapter`](super::settlement::SettlementAdapter)).
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SwapError {
+    /// The engine is unreachable or not ready.
+    #[error("swap engine unavailable")]
+    Unavailable,
+    /// The hand-off is malformed or references data the engine cannot use.
+    #[error("invalid swap hand-off: {0}")]
+    InvalidHandoff(String),
+    /// The engine failed internally.
+    #[error("swap engine internal error: {0}")]
+    Internal(String),
+}
 
 /// Why a swap order was blocked by the risk gate. Checks are evaluated in
 /// declaration order, so the first failing check is the one reported.
@@ -78,3 +104,4 @@ impl fmt::Display for RiskRejection {
 }
 
 impl std::error::Error for RiskRejection {}
+
