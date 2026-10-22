@@ -32,6 +32,11 @@ pub mod compliance;
 pub mod market_data;
 pub mod versioning;
 
+pub mod clock;
+pub mod disputes;
+pub mod secrets;
+pub mod transport;
+
 use async_trait::async_trait;
 use opentelemetry::KeyValue;
 use sqlx::types::BigDecimal;
