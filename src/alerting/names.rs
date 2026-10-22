@@ -15,6 +15,9 @@ pub const PIPELINE_LATENCY_BUDGET_EXCEEDED: &str = "PipelineLatencyBudgetExceede
 pub const TOKIO_TASK_LEAK_SUSPECTED: &str = "TokioTaskLeakSuspected";
 pub const RELEASE_RELIABILITY_REGRESSION: &str = "ReleaseReliabilityRegression";
 pub const QUOTA_CONFIG_SPLIT_BRAIN: &str = "QuotaConfigSplitBrain";
+pub const SETTLEMENT_FEE_SPIKE: &str = "SettlementFeeSpike";
+pub const SETTLEMENT_FEE_BUMP_FREQUENCY_ANOMALY: &str = "SettlementFeeBumpFrequencyAnomaly";
+pub const SETTLEMENT_FEE_CAP_REJECTION: &str = "SettlementFeeCapRejection";
 pub const SWAP_SURVEILLANCE_HIGH_SEVERITY: &str = "SwapSurveillanceHighSeverity";
 pub const SWAP_ARCHIVE_DEGRADED: &str = "SwapArchiveDegraded";
 
@@ -26,6 +29,9 @@ pub const ALL: &[&str] = &[
     TOKIO_TASK_LEAK_SUSPECTED,
     RELEASE_RELIABILITY_REGRESSION,
     QUOTA_CONFIG_SPLIT_BRAIN,
+    SETTLEMENT_FEE_SPIKE,
+    SETTLEMENT_FEE_BUMP_FREQUENCY_ANOMALY,
+    SETTLEMENT_FEE_CAP_REJECTION,
     SWAP_SURVEILLANCE_HIGH_SEVERITY,
     SWAP_ARCHIVE_DEGRADED,
 ];
