@@ -18,6 +18,9 @@ pub mod quoting;
 pub mod settlement;
 pub mod sources;
 
+pub mod compliance;
+pub mod notifications;
+
 use async_trait::async_trait;
 use opentelemetry::KeyValue;
 use sqlx::types::BigDecimal;
