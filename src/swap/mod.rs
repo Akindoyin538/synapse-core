@@ -344,6 +344,26 @@ pub async fn swap_enabled_for(flags: &FeatureFlagService, tenant_id: &str) -> bo
 mod tests {
     use crate::validation::state_transitions::{is_valid_transition, TRANSACTION_TRANSITIONS};
 
+    #[tokio::test]
+    async fn noop_engine_skips_every_handoff() {
+        let engine = NoopSwapEngine;
+        assert_eq!(engine.name(), "noop");
+        let handoff = SwapHandoff {
+            transaction_id: uuid::Uuid::nil(),
+            tenant_id: None,
+            stellar_account: "GA...".into(),
+            source_asset: "USDC".into(),
+            amount: BigDecimal::from(100),
+            completed_at: crate::time::Clock::now(&crate::time::SystemClock::new()),
+            idempotency_key: "swap:0".into(),
+            metadata: None,
+        };
+        assert_eq!(
+            engine.on_swap_ready(handoff).await,
+            Ok(SwapOutcome::Skipped)
+        );
+    }
+
     #[test]
     fn phase1_stub_symbols_are_gone() {
         let src = include_str!("mod.rs");
@@ -352,6 +372,7 @@ mod tests {
         for sym in ["trait SwapEngine", "NoopSwapEngine", "struct SwapHandoff"] {
             assert!(!code.contains(sym), "{sym} must not exist");
         }
+    }
     }
 
     #[test]
