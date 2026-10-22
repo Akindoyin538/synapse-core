@@ -251,6 +251,11 @@ pub struct Config {
     pub swap_engine_tenant_allowlist: Vec<String>,
     // Swap fee defaults (per-tenant/pair overrides are layered on at runtime)
     pub swap_fees: FeeConfig,
+    // Swap quote cache
+    /// TTL for cached swap quotes, in seconds. Default: 10
+    pub quote_cache_ttl_secs: u64,
+    /// Max age of the price snapshot a cached quote was derived from, in seconds. Default: 5
+    pub quote_cache_max_staleness_secs: u64,
 }
 
 pub mod assets;
@@ -445,6 +450,12 @@ impl Config {
                     .unwrap_or_else(|_| "60000".to_string())
                     .parse()?,
             },
+            quote_cache_ttl_secs: env::var("QUOTE_CACHE_TTL_SECS")
+                .unwrap_or_else(|_| "10".to_string())
+                .parse()?,
+            quote_cache_max_staleness_secs: env::var("QUOTE_CACHE_MAX_STALENESS_SECS")
+                .unwrap_or_else(|_| "5".to_string())
+                .parse()?,
             swap_engine_enabled: parse_bool(
                 &env::var("SWAP_ENGINE_ENABLED").unwrap_or_else(|_| "false".to_string()),
                 "SWAP_ENGINE_ENABLED",

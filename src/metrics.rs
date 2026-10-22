@@ -168,12 +168,22 @@ pub fn cache_misses_total() -> Counter<u64> {
         .init()
 }
 
+/// Swap quote cache lookup counter, labelled by `outcome` (hit, miss, stale_reject).
+pub fn quote_cache_lookups_total() -> Counter<u64> {
+    meter()
+        .u64_counter("quote_cache_lookups_total")
+        .with_description("Swap quote cache lookups by outcome")
+        .init()
+}
+
 /// Swap circuit breaker and kill-switch state transitions, labeled by the
 /// state entered (`open`, `half_open`, `closed`).
 pub fn swap_breaker_transitions_total() -> Counter<u64> {
     meter()
         .u64_counter("swap_breaker_transitions_total")
         .with_description("Swap circuit breaker state transitions, labeled by new state")
+        .init()
+}
         .init()
 }
 
