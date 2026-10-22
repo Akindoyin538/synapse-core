@@ -245,6 +245,9 @@ pub struct Config {
     pub swap_accepting_orders: bool,
     /// Per-tenant and per-provider swap circuit breaker thresholds.
     pub swap_breaker: BreakerConfig,
+    // Swap engine rollout gate (process-wide kill switch + tenant allowlist)
+    pub swap_engine_enabled: bool,
+    pub swap_engine_tenant_allowlist: Vec<String>,
 }
 
 pub mod assets;
@@ -439,6 +442,17 @@ impl Config {
                     .unwrap_or_else(|_| "60000".to_string())
                     .parse()?,
             },
+            swap_engine_enabled: parse_bool(
+                &env::var("SWAP_ENGINE_ENABLED").unwrap_or_else(|_| "false".to_string()),
+                "SWAP_ENGINE_ENABLED",
+            )?,
+            swap_engine_tenant_allowlist: env::var("SWAP_ENGINE_TENANT_ALLOWLIST")
+                .unwrap_or_default()
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect(),
             asset_registry_refresh_secs: env::var("ASSET_REGISTRY_REFRESH_SECS")
                 .unwrap_or_else(|_| "300".to_string())
                 .parse()?,
@@ -469,6 +483,27 @@ impl Config {
                 ),
             },
         })
+    }
+
+    /// Env-level gate for new swap hand-offs. `false` when the process-wide kill
+    /// switch (`SWAP_ENGINE_ENABLED`) is off, or when the tenant is not listed in
+    /// `SWAP_ENGINE_TENANT_ALLOWLIST` (`*` admits every tenant). Callers must
+    /// also check the per-tenant `swap_engine` feature flag. Only gates *new*
+    /// hand-offs; orders already routed are not affected.
+    pub fn swap_engine_allows_tenant(&self, tenant_id: &str) -> bool {
+        self.swap_engine_enabled
+            && self
+                .swap_engine_tenant_allowlist
+                .iter()
+                .any(|entry| entry == "*" || entry == tenant_id)
+    }
+}
+
+fn parse_bool(raw: &str, key: &str) -> anyhow::Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" => Ok(true),
+        "false" | "0" | "" => Ok(false),
+        _ => anyhow::bail!("{key} must be 'true' or 'false'"),
     }
 }
 
