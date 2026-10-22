@@ -53,6 +53,8 @@ use crate::metrics;
 
 use crate::services::feature_flags::FeatureFlagService;
 
+pub mod residency;
+pub mod simulation;
 pub mod persistence;
 
 use crate::services::feature_flags::FeatureFlagService;
