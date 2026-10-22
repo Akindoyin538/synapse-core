@@ -64,6 +64,20 @@ QUOTE_CACHE_TTL_SECS – TTL for cached swap quotes in seconds (default 10)
 QUOTE_CACHE_MAX_STALENESS_SECS – Max age of the price snapshot a cached quote may be served from, in seconds (default 5)
 ```
 
+Optional market-data (price feed for swap quoting) settings:
+
+```
+PRICE_SOURCE_URL – HTTP price source base URL; calls GET {url}/price?base=&quote= (unset disables HTTP ingestion)
+PRICE_SOURCE_TIMEOUT_MS – Per-request timeout (default 2000)
+PRICE_SOURCE_MAX_RETRIES – Retries after a failed fetch, max 10 (default 2)
+PRICE_SOURCE_RETRY_BACKOFF_MS – Base retry backoff, doubled per attempt (default 200)
+PRICE_INGESTION_INTERVAL_SECS – Scheduled ingestion interval (default 10)
+PRICE_CACHE_TTL_SECS – Fresh snapshot cache TTL in Redis (default 30)
+PRICE_MAX_AGE_SECS – Max snapshot age accepted for quoting (default 15)
+```
+
+A snapshot is usable for quoting only if it is not flagged `stale` and its source timestamp is within `PRICE_MAX_AGE_SECS`. When the source is unavailable, the last known snapshot is served with `stale = true`.
+
 Swap engine rollout (optional, defaults to off). Set per environment in `.env.development`, `.env.production`, or `.env.example.failover`:
 
 ```
