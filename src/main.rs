@@ -227,6 +227,11 @@ async fn serve(
     );
     partition_manager.start();
 
+    // Swap Phase 2 background jobs (#1505, #1506, #1508); each is opt-in via env.
+    synapse_core::swap::compliance::surveillance::spawn(pool.clone());
+    synapse_core::swap::analytics::spawn(pool.clone());
+    synapse_core::swap::market_data::spawn_maintenance(pool.clone(), None);
+
     // Stuck-transaction watchdog and DLQ depth/age alerting (#1446)
     synapse_core::swap::recovery::spawn_watchdog(pool.clone(), &config);
     tracing::info!(

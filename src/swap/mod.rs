@@ -27,6 +27,11 @@ pub mod market_data;
 pub mod order_types;
 pub mod triggers;
 
+pub mod analytics;
+pub mod compliance;
+pub mod market_data;
+pub mod versioning;
+
 use async_trait::async_trait;
 use opentelemetry::KeyValue;
 use sqlx::types::BigDecimal;
