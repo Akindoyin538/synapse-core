@@ -589,6 +589,23 @@ impl FromStr for SwapOrderStatus {
     }
 }
 
+/// A swap quote issued by the Phase 2 engine. Immutable once persisted.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SwapQuote {
+    pub id: Uuid,
+    pub tenant_id: Option<Uuid>,
+    pub stellar_account: String,
+    pub source_asset: String,
+    pub destination_asset: String,
+    pub source_amount: BigDecimal,
+    pub destination_amount: BigDecimal,
+    pub rate: BigDecimal,
+    pub fee_amount: BigDecimal,
+    pub expires_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// A Phase 2 swap intent. Amounts are fixed-point `BigDecimal`, never floats.
 /// `status` is stored as text; parse it with [`SwapOrder::status`].
 #[derive(Debug, FromRow, Serialize, Deserialize, Clone)]
@@ -637,4 +654,30 @@ impl SwapOrder {
     pub fn status(&self) -> Result<SwapOrderStatus, String> {
         self.status.parse()
     }
+}
+
+/// An execution fill against a [`SwapOrder`]. Immutable once persisted.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SwapFill {
+    pub id: Uuid,
+    pub order_id: Uuid,
+    pub order_created_at: DateTime<Utc>,
+    pub source_amount: BigDecimal,
+    pub destination_amount: BigDecimal,
+    pub rate: BigDecimal,
+    pub fee_amount: BigDecimal,
+    pub external_ref: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One entry in the append-only swap order lifecycle log.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SwapEvent {
+    pub id: Uuid,
+    pub order_id: Uuid,
+    pub order_created_at: DateTime<Utc>,
+    pub from_status: Option<String>,
+    pub to_status: String,
+    pub payload: Option<serde_json::Value>,
+    pub created_at: DateTime<Utc>,
 }
