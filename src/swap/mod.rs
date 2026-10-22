@@ -37,6 +37,11 @@ pub mod disputes;
 pub mod secrets;
 pub mod transport;
 
+pub mod events;
+pub mod path_payment;
+pub mod pricing;
+pub mod rbac;
+
 use async_trait::async_trait;
 use opentelemetry::KeyValue;
 use sqlx::types::BigDecimal;
