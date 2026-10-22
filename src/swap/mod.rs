@@ -20,6 +20,7 @@
 //! the `swap_engine` feature flag - so transactions for tenants and assets not
 //! opted into swap are completely unaffected.
 
+pub mod notifications;
 pub mod compensation;
 pub mod events;
 pub mod fees;
