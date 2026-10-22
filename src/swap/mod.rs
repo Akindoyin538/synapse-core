@@ -43,15 +43,8 @@ use crate::metrics;
 
 use crate::services::feature_flags::FeatureFlagService;
 
-/// Feature flag that opts a tenant into Phase 2 swap handling.
-pub const SWAP_ENGINE_FLAG: &str = "swap_engine";
+pub mod persistence;
 
-/// The exact data a completed Phase 1 transaction hands to Phase 2 at the
-/// `swap_ready` state. This is the stable contract a swap-engine implementation
-/// integrates against - keep it additive.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwapHandoff {
-    /// The Phase 1 transaction this hand-off o
 use crate::services::feature_flags::FeatureFlagService;
 
 /// Feature flag that opts a tenant into Phase 2 swap handling.
