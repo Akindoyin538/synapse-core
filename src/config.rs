@@ -237,6 +237,9 @@ pub struct Config {
     pub swap_retention_months: i32,
     // Per-class query timeout configuration
     pub per_class_timeout_config: PerClassTimeoutConfig,
+    /// How often the asset registry reloads from Postgres, in seconds.
+    /// Failed reloads keep the last known good registry.
+    pub asset_registry_refresh_secs: u64,
     /// Global swap order intake switch (`SWAP_ACCEPTING_ORDERS`). When false,
     /// new swap orders are rejected; in-flight orders are unaffected.
     pub swap_accepting_orders: bool,
@@ -436,6 +439,9 @@ impl Config {
                     .unwrap_or_else(|_| "60000".to_string())
                     .parse()?,
             },
+            asset_registry_refresh_secs: env::var("ASSET_REGISTRY_REFRESH_SECS")
+                .unwrap_or_else(|_| "300".to_string())
+                .parse()?,
             swap_accepting_orders: env::var("SWAP_ACCEPTING_ORDERS")
                 .unwrap_or_else(|_| "true".to_string())
                 .parse()?,
