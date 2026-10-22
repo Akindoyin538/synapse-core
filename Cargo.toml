@@ -84,6 +84,7 @@ prometheus = "0.13"
 lru = "0.18"
 parking_lot = "0.12"
 lazy_static = "1"
+aes-gcm = "0.10"
 
 [dev-dependencies]
 mockito = "1"

@@ -737,6 +737,13 @@ fn parse_log_format(raw: &str) -> anyhow::Result<LogFormat> {
     }
 }
 
+/// Keystore selection for envelope encryption of sensitive swap data
+/// (`KEYSTORE_PROVIDER=local|kms|none`). `None` leaves encryption disabled.
+pub fn keystore_config() -> Result<Option<crate::crypto::KeystoreConfig>, crate::crypto::CryptoError>
+{
+    crate::crypto::KeystoreConfig::from_env()
+}
+
 /// Pre-trade risk limits for swap orders, evaluated by
 /// [`crate::swap::risk::RiskPolicy`].
 ///
@@ -852,4 +859,5 @@ fn parse_list(raw: &str) -> Vec<String> {
         .filter(|entry| !entry.is_empty())
         .map(String::from)
         .collect()
+}
 }

@@ -42,6 +42,9 @@ pub mod path_payment;
 pub mod pricing;
 pub mod rbac;
 
+pub mod direction;
+pub mod receipts;
+
 use async_trait::async_trait;
 use opentelemetry::KeyValue;
 use sqlx::types::BigDecimal;
