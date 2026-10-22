@@ -18,6 +18,7 @@
 
 pub mod compensation;
 pub mod events;
+pub mod fees;
 
 use async_trait::async_trait;
 use sqlx::types::BigDecimal;

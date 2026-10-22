@@ -1,4 +1,5 @@
 use crate::secrets::SecretsManager;
+use crate::swap::fees::{FeeConfig, FeeRule};
 use crate::swap::circuit_breaker::BreakerConfig;
 use anyhow::Result;
 use dotenvy::dotenv;
@@ -248,6 +249,8 @@ pub struct Config {
     // Swap engine rollout gate (process-wide kill switch + tenant allowlist)
     pub swap_engine_enabled: bool,
     pub swap_engine_tenant_allowlist: Vec<String>,
+    // Swap fee defaults (per-tenant/pair overrides are layered on at runtime)
+    pub swap_fees: FeeConfig,
 }
 
 pub mod assets;
@@ -481,6 +484,20 @@ impl Config {
                         .unwrap_or_else(|_| "30".to_string())
                         .parse()?,
                 ),
+            },
+            swap_fees: FeeConfig {
+                default: FeeRule {
+                    percentage_bps: env::var("SWAP_FEE_PERCENTAGE_BPS")
+                        .unwrap_or_else(|_| "0".to_string())
+                        .parse()?,
+                    flat: env::var("SWAP_FEE_FLAT")
+                        .unwrap_or_else(|_| "0".to_string())
+                        .parse()?,
+                    spread_bps: env::var("SWAP_SPREAD_BPS")
+                        .unwrap_or_else(|_| "0".to_string())
+                        .parse()?,
+                },
+                ..Default::default()
             },
         })
     }
